@@ -14,9 +14,9 @@ Evolve artificial general intelligence through a brain-like agent model and evol
 
 ## How It works
 
-- Structure models are evolved over time within groups
-- Specimen under a certain model are put against a percentage of the specimens in the same group
-- The specimen are then chosen, mutated, as well as diversified
-- The values contained within these models are evolved after every specimen to specimen cycle
-- The structure of the models are evolved after the all the models under the group are stable enough to be compared with each other
-- The models are then chosen, mutated, as well as diversified and the cycle repeats
+- Structure models are evolved over time within batches
+- Agents under a certain model are put against a percentage of the agents in the same batch
+- The agent are then selected, mutated, and diversified
+- The values contained within these models are evolved after every agent to agent cycle
+- The structure of the models are evolved after the all the models under the same batch are stable enough to be compared with each other
+- The models are then chosen, mutated, and diversified
