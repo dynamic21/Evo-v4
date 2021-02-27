@@ -1,9 +1,10 @@
 #include <iostream>
+#include <fstream>
 #include <vector>
 #include <ctime>
 #include <algorithm>
-#define defaultNumberOfInputNodes 3
-#define defaultNumberOfOutputNodes 2
+#define defaultNumberOfInputNodes 2
+#define defaultNumberOfOutputNodes 1
 #define defaultMutationRate 0.1
 #define defaultMutationAmplitude 0.1
 #define mutationFactor 0.01
@@ -13,11 +14,15 @@
 
 using std::cout;
 using std::endl;
+using std::ifstream;
 using std::max;
+using std::ofstream;
 using std::vector;
+ofstream fileOut;
+ifstream fileIn;
 
 // TODO:
-// - species stability function
+// - species stability function and evaluation function
 // - batch and environment
 
 double randDouble()
@@ -38,16 +43,35 @@ public:
     double bias;
     vector<double> weights;
 
-    componentNode()
+    componentNode(bool download = false)
     {
-        numberOfWeights = 0;
-        currentlyActive = true;
-        defaultMemoryMutationAmplitude = defaultMutationAmplitude;
-        biasMutationAmplitude = defaultMutationAmplitude;
-        weightMutationAmplitude = defaultMutationAmplitude;
-        defaultMemory = 0;
-        memory = 0;
-        bias = 0;
+        if (download)
+        {
+            fileIn >> numberOfWeights;
+            fileIn >> currentlyActive;
+            fileIn >> defaultMemoryMutationAmplitude;
+            fileIn >> biasMutationAmplitude;
+            fileIn >> weightMutationAmplitude;
+            fileIn >> defaultMemory;
+            fileIn >> memory;
+            fileIn >> bias;
+            for (int i = 0; i < numberOfWeights; i++)
+            {
+                weights.push_back(0);
+                fileIn >> weights[i];
+            }
+        }
+        else
+        {
+            numberOfWeights = 0;
+            currentlyActive = true;
+            defaultMemoryMutationAmplitude = defaultMutationAmplitude;
+            biasMutationAmplitude = defaultMutationAmplitude;
+            weightMutationAmplitude = defaultMutationAmplitude;
+            defaultMemory = 0;
+            memory = 0;
+            bias = 0;
+        }
     }
 
     componentNode(componentNode *givenComponentNode)
@@ -66,6 +90,23 @@ public:
         }
     }
 
+    void saveState()
+    {
+        fileOut << numberOfWeights << endl;
+        fileOut << currentlyActive << endl;
+        fileOut << defaultMemoryMutationAmplitude << endl;
+        fileOut << biasMutationAmplitude << endl;
+        fileOut << weightMutationAmplitude << endl;
+        fileOut << defaultMemory << endl;
+        fileOut << memory << endl;
+        fileOut << bias << endl;
+        for (int i = 0; i < numberOfWeights; i++)
+        {
+            fileOut << weights[i] << " ";
+        }
+        fileOut << endl;
+    }
+
     void info()
     {
         cout << "-----|numberOfWeights: " << numberOfWeights << endl;
@@ -77,7 +118,7 @@ public:
         cout << "-----|memory: " << memory << endl;
         cout << "-----|bias: " << bias << endl;
         cout << "-----|weights: ";
-        for (int i = 0; i < weights.size(); i++)
+        for (int i = 0; i < numberOfWeights; i++)
         {
             cout << weights[i] << " ";
         }
@@ -108,13 +149,29 @@ public:
     double deleteConnectionMutationRate;
     vector<int> connections;
 
-    structureNode()
+    structureNode(bool download = false)
     {
-        numberOfConnections = 0;
-        addNodeMutationRate = defaultMutationRate;
-        deleteNodeMutationRate = defaultMutationRate;
-        addConnectionMutationRate = defaultMutationRate;
-        deleteConnectionMutationRate = defaultMutationRate;
+        if (download)
+        {
+            fileIn >> numberOfConnections;
+            fileIn >> addNodeMutationRate;
+            fileIn >> deleteNodeMutationRate;
+            fileIn >> addConnectionMutationRate;
+            fileIn >> deleteConnectionMutationRate;
+            for (int i = 0; i < numberOfConnections; i++)
+            {
+                connections.push_back(0);
+                fileIn >> connections[i];
+            }
+        }
+        else
+        {
+            numberOfConnections = 0;
+            addNodeMutationRate = defaultMutationRate;
+            deleteNodeMutationRate = defaultMutationRate;
+            addConnectionMutationRate = defaultMutationRate;
+            deleteConnectionMutationRate = defaultMutationRate;
+        }
     }
 
     structureNode(structureNode *givenStructureNode)
@@ -128,6 +185,20 @@ public:
         {
             connections.push_back(givenStructureNode->connections[i]);
         }
+    }
+
+    void saveState()
+    {
+        fileOut << numberOfConnections << endl;
+        fileOut << addNodeMutationRate << endl;
+        fileOut << deleteNodeMutationRate << endl;
+        fileOut << addConnectionMutationRate << endl;
+        fileOut << deleteConnectionMutationRate << endl;
+        for (int i = 0; i < numberOfConnections; i++)
+        {
+            fileOut << connections[i] << " ";
+        }
+        fileOut << endl;
     }
 
     void info()
@@ -162,33 +233,47 @@ public:
     vector<structureNode *> *structureNodesPointer;
     vector<componentNode *> componentNodes;
 
-    agent()
+    agent(bool download = false)
     {
-        score = 0;
-        numberOfComponentNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;
-        structureNodesPointer = NULL;
-        for (int i = 0; i < numberOfComponentNodes; i++)
+        if (download)
         {
-            componentNodes.push_back(new componentNode());
-            if (i < defaultNumberOfInputNodes)
+            fileIn >> score;
+            fileIn >> numberOfComponentNodes;
+            structureNodesPointer = NULL; // model handles this
+            for (int i = 0; i < numberOfComponentNodes; i++)
             {
-                for (int j = 0; j < defaultNumberOfOutputNodes; j++)
-                {
-                    componentNodes[i]->weights.push_back(0);
-                }
-                componentNodes[i]->numberOfWeights = defaultNumberOfOutputNodes;
+                componentNodes.push_back(new componentNode(true));
             }
-            else
-            {
-                for (int j = 0; j < defaultNumberOfInputNodes; j++)
-                {
-                    componentNodes[i]->weights.push_back(0);
-                }
-                componentNodes[i]->numberOfWeights = defaultNumberOfInputNodes;
-            }
-            componentNodes[i]->mutate();
+            resetMemory();
         }
-        resetMemory();
+        else
+        {
+            score = 0;
+            numberOfComponentNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;
+            structureNodesPointer = NULL;
+            for (int i = 0; i < numberOfComponentNodes; i++)
+            {
+                componentNodes.push_back(new componentNode());
+                if (i < defaultNumberOfInputNodes)
+                {
+                    for (int j = 0; j < defaultNumberOfOutputNodes; j++)
+                    {
+                        componentNodes[i]->weights.push_back(0);
+                    }
+                    componentNodes[i]->numberOfWeights = defaultNumberOfOutputNodes;
+                }
+                else
+                {
+                    for (int j = 0; j < defaultNumberOfInputNodes; j++)
+                    {
+                        componentNodes[i]->weights.push_back(0);
+                    }
+                    componentNodes[i]->numberOfWeights = defaultNumberOfInputNodes;
+                }
+                componentNodes[i]->mutate();
+            }
+            resetMemory();
+        }
     }
 
     agent(agent *givenAgent)
@@ -199,6 +284,17 @@ public:
         for (int i = 0; i < numberOfComponentNodes; i++)
         {
             componentNodes.push_back(new componentNode(givenAgent->componentNodes[i]));
+        }
+    }
+
+    void saveState()
+    {
+        fileOut << score << endl;
+        fileOut << numberOfComponentNodes << endl;
+        // model adds the reference
+        for (int i = 0; i < numberOfComponentNodes; i++)
+        {
+            componentNodes[i]->saveState();
         }
     }
 
@@ -230,6 +326,11 @@ public:
         {
             componentNodes[i]->mutate();
         }
+    }
+
+    void resetScore()
+    {
+        score = 0;
     }
 
     void resetMemory()
@@ -297,6 +398,216 @@ public:
     }
 };
 
+class environment
+{
+public:
+    bool setButton;
+    int setValue;
+    int expectedValue;
+    int numberOfAgents;
+    vector<agent *> agents;
+
+    environment(bool download = false)
+    {
+        if (download)
+        {
+            fileIn >> setButton;
+            fileIn >> setValue;
+            fileIn >> expectedValue;
+            fileIn >> numberOfAgents;
+            for (int i = 0; i < numberOfAgents; i++)
+            {
+                agents.push_back(new agent(true));
+            }
+        }
+        else
+        {
+            setButton = true;
+            setValue = 0;
+            expectedValue = 0;
+            numberOfAgents = 0;
+        }
+    }
+
+    environment(environment *givenEnvironment)
+    {
+        numberOfAgents = givenEnvironment->numberOfAgents;
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents.push_back(new agent(givenEnvironment->agents[i]));
+        }
+    }
+
+    void erase()
+    {
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents[i]->erase();
+            delete agents[i];
+        }
+    }
+
+    void saveState()
+    {
+        fileOut << setButton << endl;
+        fileOut << setValue << endl;
+        fileOut << expectedValue << endl;
+        fileOut << numberOfAgents << endl;
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents[i]->saveState();
+        }
+    }
+
+    void info()
+    {
+        cout << "setButton: " << setButton << endl;
+        cout << "setValue: " << setValue << endl;
+        cout << "expectedValue: " << expectedValue << endl;
+        cout << "numberOfAgents: " << numberOfAgents << endl;
+        cout << "agents: ";
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            cout << agents[i] << " ";
+        }
+        cout << endl;
+        cout << "__________" << endl;
+    }
+
+    vector<double> getInput()
+    {
+        vector<double> input;
+        input.push_back(setButton);
+        input.push_back(setValue);
+        return input;
+    }
+
+    void addAgent(agent *givenAgent)
+    {
+        givenAgent->resetMemory();
+        agents.push_back(givenAgent);
+        numberOfAgents++;
+    }
+
+    void removeAgent(int givenIndex)
+    {
+        agents.erase(agents.begin() + givenIndex);
+        numberOfAgents--;
+    }
+
+    void start()
+    {
+        int length = 100;
+        while (length--)
+        {
+            if (setButton)
+            {
+                expectedValue = setValue;
+            }
+            for (int i = 0; i < numberOfAgents; i++)
+            {
+                // agents[i]->score -= abs(expectedValue - agents[i]->evaluateInput(getInput())[0]);
+                agents[i]->score -= abs(10 - agents[i]->evaluateInput(getInput())[0]);
+            }
+            setButton = false;
+            if (rand() % 10 == 0)
+            {
+                if (setValue++ == 1)
+                {
+                    setValue = -1;
+                }
+                setButton = true;
+            }
+        }
+    }
+};
+
+class lobby
+{
+public:
+    int numberOfAgents;
+    vector<agent *> agents;
+
+    lobby(bool download = false)
+    {
+        if (download)
+        {
+            fileIn >> numberOfAgents;
+            for (int i = 0; i < numberOfAgents; i++)
+            {
+                agents.push_back(new agent(true));
+            }
+        }
+        else
+        {
+            numberOfAgents = 0;
+        }
+    }
+
+    lobby(lobby *givenLobby)
+    {
+        numberOfAgents = givenLobby->numberOfAgents;
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents.push_back(new agent(givenLobby->agents[i]));
+        }
+    }
+
+    void erase()
+    {
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents[i]->erase();
+            delete agents[i];
+        }
+    }
+
+    void saveState()
+    {
+        fileOut << numberOfAgents << endl;
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents[i]->saveState();
+        }
+    }
+
+    void info()
+    {
+        cout << "numberOfAgents: " << numberOfAgents << endl;
+        cout << "agents: ";
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            cout << agents[i] << " ";
+        }
+        cout << endl;
+        cout << "__________" << endl;
+    }
+
+    void addAgent(agent *givenAgent)
+    {
+        givenAgent->resetMemory();
+        agents.push_back(givenAgent);
+        numberOfAgents++;
+    }
+
+    void removeAgent(int givenIndex)
+    {
+        agents.erase(agents.begin() + givenIndex);
+        numberOfAgents--;
+    }
+
+    void ready()
+    {
+        environment newEnvironment;
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            agents[i]->resetScore();
+            newEnvironment.addAgent(agents[i]);
+        }
+        newEnvironment.start();
+    }
+};
+
 class model
 {
 public:
@@ -305,32 +616,46 @@ public:
     vector<structureNode *> structureNodes;
     vector<agent *> agents;
 
-    model()
+    model(bool download = false)
     {
-        numberOfStructureNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;
-        agentRepresentative = NULL;
-        for (int i = 0; i < numberOfStructureNodes; i++)
+        if (download)
         {
-            structureNodes.push_back(new structureNode());
-            if (i < defaultNumberOfInputNodes)
+            fileIn >> numberOfStructureNodes;
+            agentRepresentative = NULL;
+            for (int i = 0; i < numberOfStructureNodes; i++)
             {
-                for (int j = defaultNumberOfInputNodes; j < numberOfStructureNodes; j++)
-                {
-                    structureNodes[i]->connections.push_back(j);
-                }
-                structureNodes[i]->numberOfConnections = defaultNumberOfOutputNodes;
+                structureNodes.push_back(new structureNode(true));
+                agents.push_back(new agent(true));
+                agents[i]->structureNodesPointer = &structureNodes;
             }
-            else
+        }
+        else
+        {
+            numberOfStructureNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;
+            agentRepresentative = NULL;
+            for (int i = 0; i < numberOfStructureNodes; i++)
             {
-                for (int j = 0; j < defaultNumberOfInputNodes; j++)
+                structureNodes.push_back(new structureNode());
+                if (i < defaultNumberOfInputNodes)
                 {
-                    structureNodes[i]->connections.push_back(j);
+                    for (int j = defaultNumberOfInputNodes; j < numberOfStructureNodes; j++)
+                    {
+                        structureNodes[i]->connections.push_back(j);
+                    }
+                    structureNodes[i]->numberOfConnections = defaultNumberOfOutputNodes;
                 }
-                structureNodes[i]->numberOfConnections = defaultNumberOfInputNodes;
+                else
+                {
+                    for (int j = 0; j < defaultNumberOfInputNodes; j++)
+                    {
+                        structureNodes[i]->connections.push_back(j);
+                    }
+                    structureNodes[i]->numberOfConnections = defaultNumberOfInputNodes;
+                }
+                structureNodes[i]->mutate();
+                agents.push_back(new agent());
+                agents[i]->structureNodesPointer = &structureNodes;
             }
-            structureNodes[i]->mutate();
-            agents.push_back(new agent());
-            agents[i]->structureNodesPointer = &structureNodes;
         }
     }
 
@@ -352,6 +677,16 @@ public:
             delete structureNodes[i];
             agents[i]->erase();
             delete agents[i];
+        }
+    }
+
+    void saveState()
+    {
+        fileOut << numberOfStructureNodes << endl;
+        for (int i = 0; i < numberOfStructureNodes; i++)
+        {
+            structureNodes[i]->saveState();
+            agents[i]->saveState();
         }
     }
 
@@ -407,7 +742,7 @@ public:
 
     void setAgentRepresentative()
     {
-        agentRepresentative = agents[0];
+        agentRepresentative = new agent(agents[0]);
     }
 
     void diversifyAgentRepresentative()
@@ -419,6 +754,32 @@ public:
             agents[i] = new agent(agentRepresentative);
             agents[i]->mutate();
         }
+        agentRepresentative->erase();
+        delete agentRepresentative;
+    }
+
+    void evaluateAgents()
+    {
+        lobby newLobby;
+        for (int i = 0; i < numberOfStructureNodes; i++)
+        {
+            agents[i]->resetScore();
+            newLobby.addAgent(agents[i]);
+        }
+        newLobby.ready();
+    }
+
+    void evaluateSelectDiversify()
+    {
+        evaluateAgents();
+        shuffleAgents();
+        sortAgents();
+        selectionAndReplaceAgents();
+        // delete code after this comment, it is for saving program state of the model scope
+        fileOut.open("storage.txt");
+        saveState();
+        fileOut.close();
+        cout << agents[0]->score << endl;
     }
 
     vector<vector<int>> getReverseStructure()
@@ -497,11 +858,6 @@ public:
     }
 };
 
-class environment
-{
-public:
-};
-
 class batch
 {
 public:
@@ -511,12 +867,11 @@ int main()
 {
     srand(unsigned((time(NULL) % 9973 + 1) * (time(NULL) % 997 + 1) * (time(NULL) % 97 + 1) * (time(NULL) % 7 + 1)));
 
-    model newModel;
-    vector<double> output = newModel.agents[0]->evaluateInput({1, 2, 3});
-    for (int i = 0; i < defaultNumberOfOutputNodes; i++)
+    fileIn.open("storage.txt");
+    model newModel(true);
+    fileIn.close();
+    while (true)
     {
-        cout << output[i] << endl;
+        newModel.evaluateSelectDiversify();
     }
-    cout << endl;
-    newModel.agents[0]->info();
 }
