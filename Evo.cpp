@@ -12,16 +12,23 @@
 #define agentsKeptPercent 0.2
 #define speciesKeptPercent 0.2
 
+using std::abs;
 using std::cout;
 using std::endl;
 using std::ifstream;
+using std::ios;
 using std::max;
 using std::ofstream;
+using std::string;
 using std::vector;
 ofstream fileOut;
 ifstream fileIn;
 
+// Important Details:
+// - Number of agents = number of structureNodes, this is because the number of mutation exploration is proportional to its size
+
 // TODO:
+// - change number of agents default +1
 // - lobby fitting and clean up environment / lobby roles
 // - finish up lobby and environment comments
 // - model stability function and model mutations
@@ -94,19 +101,18 @@ public:
 
     void saveState() // stores all data of the componentNode to the storage file
     {
-        fileOut << numberOfWeights << endl;
-        fileOut << currentlyActive << endl;
-        fileOut << defaultMemoryMutationAmplitude << endl;
-        fileOut << biasMutationAmplitude << endl;
-        fileOut << weightMutationAmplitude << endl;
-        fileOut << defaultMemory << endl;
-        fileOut << memory << endl;
-        fileOut << bias << endl;
+        fileOut << numberOfWeights << " ";
+        fileOut << currentlyActive << " ";
+        fileOut << defaultMemoryMutationAmplitude << " ";
+        fileOut << biasMutationAmplitude << " ";
+        fileOut << weightMutationAmplitude << " ";
+        fileOut << defaultMemory << " ";
+        fileOut << memory << " ";
+        fileOut << bias << " ";
         for (int i = 0; i < numberOfWeights; i++)
         {
             fileOut << weights[i] << " ";
         }
-        fileOut << endl;
     }
 
     void info() // prints somewhat readable componentNode data for the user
@@ -191,16 +197,15 @@ public:
 
     void saveState() // stores all data of the structureNode to the storage file
     {
-        fileOut << numberOfConnections << endl;
-        fileOut << addNodeMutationRate << endl;
-        fileOut << deleteNodeMutationRate << endl;
-        fileOut << addConnectionMutationRate << endl;
-        fileOut << deleteConnectionMutationRate << endl;
+        fileOut << numberOfConnections << " ";
+        fileOut << addNodeMutationRate << " ";
+        fileOut << deleteNodeMutationRate << " ";
+        fileOut << addConnectionMutationRate << " ";
+        fileOut << deleteConnectionMutationRate << " ";
         for (int i = 0; i < numberOfConnections; i++)
         {
             fileOut << connections[i] << " ";
         }
-        fileOut << endl;
     }
 
     void info() // prints somewhat readable structureNode data for the user
@@ -230,7 +235,7 @@ public:
 class agent
 {
 public:
-    int score;                                      // the score of the agent, used for evaluation and selection
+    double score;                                   // the score of the agent, used for evaluation and selection
     int numberOfComponentNodes;                     // number of componentNodes in componentNodes vector
     vector<structureNode *> *structureNodesPointer; // the pointer to the model structure
     vector<componentNode *> componentNodes;         // vector of nodes that holds weights and biases (etc)
@@ -291,8 +296,8 @@ public:
 
     void saveState() // stores all data of the agent to the storage file
     {
-        fileOut << score << endl;
-        fileOut << numberOfComponentNodes << endl;
+        fileOut << score << " ";
+        fileOut << numberOfComponentNodes << " ";
         for (int i = 0; i < numberOfComponentNodes; i++)
         {
             componentNodes[i]->saveState();
@@ -444,10 +449,10 @@ public:
 
     void saveState() // stores all data of the environment to the storage file
     {
-        fileOut << setButton << endl;
-        fileOut << setValue << endl;
-        fileOut << expectedValue << endl;
-        fileOut << numberOfAgents << endl;
+        fileOut << setButton << " ";
+        fileOut << setValue << " ";
+        fileOut << expectedValue << " ";
+        fileOut << numberOfAgents << " ";
         for (int i = 0; i < numberOfAgents; i++)
         {
             agents[i]->saveState();
@@ -469,14 +474,6 @@ public:
         cout << "__________" << endl;
     }
 
-    vector<double> getInput()
-    {
-        vector<double> input;
-        input.push_back(setButton);
-        input.push_back(setValue);
-        return input;
-    }
-
     void addAgent(agent *givenAgent)
     {
         givenAgent->resetMemory();
@@ -490,11 +487,20 @@ public:
         numberOfAgents--;
     }
 
+    vector<double> getInput()
+    {
+        vector<double> input;
+        input.push_back(setButton);
+        input.push_back(setValue);
+        return input;
+    }
+
     void start()
     {
         int length = 100;
         while (length--)
         {
+            setValue = rand() % 3 - 1;
             if (setButton)
             {
                 expectedValue = setValue;
@@ -507,10 +513,6 @@ public:
             setButton = false;
             if (rand() % 10 == 0)
             {
-                if (setValue++ == 1)
-                {
-                    setValue = -1;
-                }
                 setButton = true;
             }
         }
@@ -559,7 +561,7 @@ public:
 
     void saveState() // stores all data of the lobby to the storage file
     {
-        fileOut << numberOfAgents << endl;
+        fileOut << numberOfAgents << " ";
         for (int i = 0; i < numberOfAgents; i++)
         {
             agents[i]->saveState();
@@ -677,7 +679,7 @@ public:
 
     void saveState() // stores all data of the model to the storage file
     {
-        fileOut << numberOfStructureNodes << endl;
+        fileOut << numberOfStructureNodes << " ";
         for (int i = 0; i < numberOfStructureNodes; i++)
         {
             structureNodes[i]->saveState();
@@ -752,9 +754,14 @@ public:
         sortAgents();                // sorts the agents
         selectionAndReplaceAgents(); // replaces the bottom percent with mutated top percent
         // delete code after this comment, it is for saving program state only in the model scope, will transition to batch scope once complete
-        fileOut.open("storage.txt");      // clears and opens storage file
-        saveState();                      // stores all data of the model to the file
-        fileOut.close();                  // closes the file
+        fileOut.open("storage.txt");       // clears and opens storage file
+        saveState();                       // stores all data of the model to the file
+        fileOut << "f";                    // notifies that the file is complete
+        fileOut.close();                   // closes the file
+        fileOut.open("backupStorage.txt"); // repeat with backup because if program stops midway storage, one file is guaranteed to be "complete"
+        saveState();
+        fileOut << "f";
+        fileOut.close();
         cout << agents[0]->score << endl; // for testing purposes
     }
 
@@ -872,13 +879,29 @@ class batch // stores different models, not guaranteed to be different though
 public:
 };
 
+string getStorageFile() // gets a completed file, if storage.txt doesn't have f at the end, then backupStorage.txt is guaranteed to have it
+{
+    fileIn.open("storage.txt");
+    string a;
+    while (fileIn >> a)
+    {
+        if (a == "f")
+        {
+            fileIn.close();
+            return "storage.txt";
+        }
+    }
+    fileIn.close();
+    return "backupStorage.txt";
+}
+
 int main()
 {
     srand(unsigned((time(NULL) % 9973 + 1) * (time(NULL) % 997 + 1) * (time(NULL) % 97 + 1) * (time(NULL) % 7 + 1))); // seeds the seed
 
-    fileIn.open("storage.txt"); // opens storage file
-    model newModel(true);       // copies the stored model from last trained session
-    fileIn.close();             // closes storage file
+    fileIn.open(getStorageFile()); // opens "uncorrupted" storage file
+    model newModel(true);          // copies the stored model from last trained session
+    fileIn.close();                // closes storage file
     while (true)
     {
         newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
