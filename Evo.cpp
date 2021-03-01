@@ -903,14 +903,6 @@ public:
             agentRepresentative->componentNodes.push_back(new componentNode());                                     // adds a component node to the agent to mirror the alteration
             agentRepresentative->componentNodes[agentRepresentative->numberOfComponentNodes]->weights.push_back(1); // adds a weight to the new component node to mirror alteration
             agentRepresentative->componentNodes[agentRepresentative->numberOfComponentNodes++]->numberOfWeights++;  //  then updates number of componentNodes and weights
-            if (agentRepresentative->numberOfComponentNodes != numberOfStructureNodes || agentRepresentative->componentNodes.size() != structureNodes.size())
-            {
-                cout << "error!" << endl;
-                cout << agentRepresentative->numberOfComponentNodes << endl;
-                cout << numberOfStructureNodes << endl;
-                cout << agentRepresentative->componentNodes.size() << endl;
-                cout << structureNodes.size() << endl;
-            }
         }
     }
 
