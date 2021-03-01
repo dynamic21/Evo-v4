@@ -1173,9 +1173,8 @@ int main()
     }
     // newModel.info();
     // return 0;
-    newModel.deleteConnection();
-    // while (true)
-    // {
-    //     newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
-    // }
+    while (true)
+    {
+        newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
+    }
 }
