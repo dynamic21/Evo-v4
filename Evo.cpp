@@ -6,17 +6,18 @@
 #define defaultNumberOfInputNodes 2
 #define defaultNumberOfOutputNodes 1
 #define defaultMutationRate 0.1
-#define defaultMutationAmplitude 0.1
+#define defaultMutationAmplitude 0.01
 #define mutationFactor 0.01
 #define populationExposurePercent 0.2
 #define agentsKeptPercent 0.2
+#define inverseAgentsReplacedPercent 1 / (1 - agentsKeptPercent)
 #define speciesKeptPercent 0.2
+#define logLength 100
 
 using std::abs;
 using std::cout;
 using std::endl;
 using std::ifstream;
-using std::ios;
 using std::max;
 using std::ofstream;
 using std::string;
@@ -25,13 +26,10 @@ ofstream fileOut;
 ifstream fileIn;
 
 // Important Details:
-// - Number of agents = number of structureNodes, this is because the number of mutation exploration is proportional to its size
+// - Number of agents = numberOfStructureNodes + numberOfAgentsKept, this is because the number of mutation exploration is proportional to its size
+// - deleting nodes is a bit painful to do with the index format I am currently using, I am thinking about transitioning it into pointer format, for now, I will not delete nodes
 
 // TODO:
-// - change number of agents default +1
-// - lobby fitting and clean up environment / lobby roles
-// - finish up lobby and environment comments
-// - model stability function and model mutations
 // - batch
 
 double randDouble()
@@ -401,11 +399,11 @@ public:
 class environment
 {
 public:
-    bool setButton;
-    int setValue;
-    int expectedValue;
-    int numberOfAgents;
-    vector<agent *> agents;
+    bool setButton;         // this is the button that sets the value
+    int setValue;           // this is the value that is set
+    int expectedValue;      // this is the value that we want the agent to remember
+    int numberOfAgents;     // number of agents in agents vector
+    vector<agent *> agents; // vector of agents
 
     environment(bool download = false) // if download, initialize an environment using the stored training state, otherwise, initialize a default environment
     {
@@ -422,7 +420,7 @@ public:
         }
         else
         {
-            setButton = true;
+            setButton = true; // game starts with a set button to get an expected value
             setValue = 0;
             expectedValue = 0;
             numberOfAgents = 0;
@@ -476,7 +474,6 @@ public:
 
     void addAgent(agent *givenAgent)
     {
-        givenAgent->resetMemory();
         agents.push_back(givenAgent);
         numberOfAgents++;
     }
@@ -487,7 +484,7 @@ public:
         numberOfAgents--;
     }
 
-    vector<double> getInput()
+    vector<double> getInput() // returns the environment inputs to the agent, what the agent "sees" (the set button and set value, not the expected value)
     {
         vector<double> input;
         input.push_back(setButton);
@@ -495,23 +492,28 @@ public:
         return input;
     }
 
-    void start()
+    double convertOutput(vector<double> output) // takes the agent's actions and acts it in the environment, returns their score
     {
-        int length = 100;
+        return abs(expectedValue - output[0]);
+    }
+
+    void start() // starts the environment
+    {
+        setButton = true; // game starts with a set button to get an expected value
+        int length = 100; // game lasts 100 ticks
         while (length--)
         {
-            setValue = rand() % 3 - 1;
-            if (setButton)
+            setValue = rand() % 3 - 1; // setValue is randomized from -1 to 1
+            if (setButton)             // if set button is true, set the expected value to the set value
             {
                 expectedValue = setValue;
             }
-            for (int i = 0; i < numberOfAgents; i++)
+            for (int i = 0; i < numberOfAgents; i++) // get every agents actions and score them
             {
-                // agents[i]->score -= abs(expectedValue - agents[i]->evaluateInput(getInput())[0]);
-                agents[i]->score -= abs(10 - agents[i]->evaluateInput(getInput())[0]);
+                agents[i]->score -= convertOutput(agents[i]->evaluateInput(getInput()));
             }
-            setButton = false;
-            if (rand() % 10 == 0)
+            setButton = false;    // set the set button to false
+            if (rand() % 10 == 0) // press the button once out of 10 ticks
             {
                 setButton = true;
             }
@@ -594,21 +596,55 @@ public:
         numberOfAgents--;
     }
 
-    void ready()
+    void shuffleAgents() // shuffle the agents around in agents vector
     {
-        environment newEnvironment;
         for (int i = 0; i < numberOfAgents; i++)
         {
-            newEnvironment.addAgent(agents[i]);
+            int tempAgentIndex = rand() % numberOfAgents;
+            agent *tempAgent = agents[tempAgentIndex];
+            agents[tempAgentIndex] = agents[i];
+            agents[i] = tempAgent;
         }
-        newEnvironment.start();
+    }
+
+    void ready()
+    {
+        int targetedNumberOfAgentsExposed = max(1, int(numberOfAgents * populationExposurePercent)); // number of agents each agent should be exposed to
+        int numberOfAgentsExposed = 0;                                                               // number of agents each agent has been exposed to
+        while (numberOfAgentsExposed < targetedNumberOfAgentsExposed)
+        {
+            shuffleAgents(); // randomize the waiting line
+            for (int i = 0; i < numberOfAgents; i++)
+            {
+                environment newEnvironment; // create new environment
+                int k = i;
+                for (int j = 0; j < 2; j++)
+                {
+                    newEnvironment.addAgent(agents[k]); // add the 2 neighboring agents into the environment
+                    if (++k == numberOfAgents)          // loop around the waiting list if there is no next person
+                    {
+                        k = 0;
+                    }
+                }
+                newEnvironment.start(); // start the environment
+            }
+            numberOfAgentsExposed += 2; // number of agent exposed is 2 * (playersInEnvironment - 1), this is for a set size environment like chess
+        }
     }
 };
 
 class model
 {
 public:
-    int numberOfStructureNodes;             // number of agents in agents vector
+    int numberOfStructureNodes;             // number of structureNodes in structureNodes vector
+    int numberOfKeptAgents;                 // number of top agents kept during selection
+    int numberOfAgents;                     // number of agents in agents vector
+    int logIndex;                           // position to replace scoreLog with current score
+    int timeSinceClimax;                    // time since the max score was updated
+    int timeSinceClimaxThreshold;           // holds the threshold to when the species is ready to evolve
+    double currentScore;                    // holds the current score of the specie, average of the 100 items in scoreLog
+    double maxScore;                        // holds the max score of the specie
+    double scoreLog[logLength];             // holds 100 of the species top agents average scores for each round/evaluation cycle
     agent *agentRepresentative;             // the figurehead agent used to mirror model alerations
     vector<structureNode *> structureNodes; // vector of nodes that point to other node(s)
     vector<agent *> agents;                 // vector of agent pointers under this model
@@ -618,19 +654,41 @@ public:
         if (download)
         {
             fileIn >> numberOfStructureNodes;
+            fileIn >> numberOfKeptAgents;
+            fileIn >> numberOfAgents;
+            fileIn >> logIndex;
+            fileIn >> timeSinceClimax;
+            fileIn >> timeSinceClimaxThreshold;
+            fileIn >> currentScore;
+            fileIn >> maxScore;
+            for (int i = 0; i < logLength; i++)
+            {
+                fileIn >> scoreLog[i];
+            }
             agentRepresentative = NULL;
             for (int i = 0; i < numberOfStructureNodes; i++)
             {
                 structureNodes.push_back(new structureNode(true));
+            }
+            for (int i = 0; i < numberOfAgents; i++)
+            {
                 agents.push_back(new agent(true));
                 agents[i]->structureNodesPointer = &structureNodes; // give the agent access to the model so they can follow the structure when evaluating data
             }
         }
         else
         {
-            numberOfStructureNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes; // default number of nodes
-            agentRepresentative = NULL;                                                      // defined in model mutation
-            for (int i = 0; i < numberOfStructureNodes; i++)                                 // for each node, add a structure node and agent
+            numberOfStructureNodes = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;                             // default number of nodes
+            numberOfKeptAgents = max(1, int(numberOfStructureNodes * agentsKeptPercent * inverseAgentsReplacedPercent)); // number of top percent agents
+            numberOfAgents = numberOfStructureNodes + numberOfKeptAgents;                                                // default number of agents
+            timeSinceClimaxThreshold = numberOfStructureNodes * 10;                                                      // time it takes to get new highscore before the species is ready
+            resetScoreAndTimer();
+            for (int i = 0; i < logLength; i++)
+            {
+                fileIn >> scoreLog[i];
+            }
+            agentRepresentative = NULL;                      // defined in model mutation
+            for (int i = 0; i < numberOfStructureNodes; i++) // add number of structure nodes
             {
                 structureNodes.push_back(new structureNode());
                 if (i < defaultNumberOfInputNodes) // if an input node, connections are output node indexes
@@ -650,7 +708,10 @@ public:
                     structureNodes[i]->numberOfConnections = defaultNumberOfInputNodes;
                 }
                 structureNodes[i]->mutate(); // mutate the mutation rates of the node
-                agents.push_back(new agent());
+            }
+            for (int i = 0; i < numberOfAgents; i++) // add number of agents
+            {
+                agents.push_back(new agent());                      // agents mutate during default initialization
                 agents[i]->structureNodesPointer = &structureNodes; // give the agent access to the model so they can follow the structure when evaluating data
             }
         }
@@ -659,10 +720,24 @@ public:
     model(model *givenModel) // copies a given model using its pointer
     {
         numberOfStructureNodes = givenModel->numberOfStructureNodes;
+        numberOfKeptAgents = givenModel->numberOfKeptAgents;
+        numberOfAgents = givenModel->numberOfAgents;
+        logIndex = givenModel->logIndex;
+        timeSinceClimax = givenModel->timeSinceClimax;
+        timeSinceClimaxThreshold = givenModel->timeSinceClimaxThreshold;
+        currentScore = givenModel->currentScore;
+        maxScore = givenModel->maxScore;
+        for (int i = 0; i < logLength; i++)
+        {
+            scoreLog[i] = givenModel->scoreLog[i];
+        }
         agentRepresentative = givenModel->agentRepresentative;
         for (int i = 0; i < numberOfStructureNodes; i++)
         {
             structureNodes.push_back(new structureNode(givenModel->structureNodes[i]));
+        }
+        for (int i = 0; i < numberOfAgents; i++)
+        {
             agents.push_back(new agent(givenModel->agents[i]));
         }
     }
@@ -672,6 +747,9 @@ public:
         for (int i = 0; i < numberOfStructureNodes; i++)
         {
             delete structureNodes[i];
+        }
+        for (int i = 0; i < numberOfAgents; i++)
+        {
             agents[i]->erase();
             delete agents[i];
         }
@@ -680,9 +758,23 @@ public:
     void saveState() // stores all data of the model to the storage file
     {
         fileOut << numberOfStructureNodes << " ";
+        fileOut << numberOfKeptAgents << " ";
+        fileOut << numberOfAgents << " ";
+        fileOut << logIndex << " ";
+        fileOut << timeSinceClimax << " ";
+        fileOut << timeSinceClimaxThreshold << " ";
+        fileOut << currentScore << " ";
+        fileOut << maxScore << " ";
+        for (int i = 0; i < logLength; i++)
+        {
+            fileOut << scoreLog[i] << " ";
+        }
         for (int i = 0; i < numberOfStructureNodes; i++)
         {
             structureNodes[i]->saveState();
+        }
+        for (int i = 0; i < numberOfAgents; i++)
+        {
             agents[i]->saveState();
         }
     }
@@ -690,6 +782,19 @@ public:
     void info() // prints somewhat readable model data for the user
     {
         cout << "-|numberOfStructureNodes: " << numberOfStructureNodes << endl;
+        cout << "-|numberOfKeptAgents: " << numberOfKeptAgents << endl;
+        cout << "-|numberOfAgents: " << numberOfAgents << endl;
+        cout << "-|logIndex: " << logIndex << endl;
+        cout << "-|timeSinceClimax: " << timeSinceClimax << endl;
+        cout << "-|timeSinceClimaxThreshold: " << timeSinceClimaxThreshold << endl;
+        cout << "-|currentScore: " << currentScore << endl;
+        cout << "-|maxScore: " << maxScore << endl;
+        cout << "-|scoreLog: ";
+        for (int i = 0; i < logLength; i++)
+        {
+            cout << scoreLog[i] << " ";
+        }
+        cout << endl;
         cout << "-|agentRepresentative: " << agentRepresentative << endl;
         cout << "-|structureNodes: " << endl;
         cout << "__________" << endl;
@@ -700,18 +805,62 @@ public:
         }
         cout << "-|agents: " << endl;
         cout << "__________" << endl;
-        for (int i = 0; i < numberOfStructureNodes; i++)
+        for (int i = 0; i < numberOfAgents; i++)
         {
             agents[i]->info();
             cout << "__________" << endl;
         }
     }
 
+    void resetScoreAndTimer()
+    {
+        logIndex = 0;
+        timeSinceClimax = 0;
+        currentScore = 0;
+        maxScore = 0;
+        for (int i = 0; i < logLength; i++)
+        {
+            scoreLog[i] = 0;
+        }
+    }
+
+    void updateScoreAndTimer()
+    {
+        double sum = 0;
+        for (int i = 0; i < numberOfKeptAgents; i++) // get the average of the top scores
+        {
+            sum += agents[i]->score;
+        }
+        sum /= numberOfKeptAgents * logLength;
+        currentScore += sum - scoreLog[logIndex]; // update the specie's current score to be the average of the score log
+        scoreLog[logIndex] = sum;                 // add current score to scoreLog at the log index
+        if (currentScore > maxScore)              // set max score and reset timeSinceClimax
+        {
+            maxScore = currentScore;
+            timeSinceClimax = 0;
+        }
+        if (++logIndex == logLength) // increase logIndex to next index
+        {
+            logIndex = 0;
+        }
+        timeSinceClimax++; // increase the timeSinceClimax
+    }
+
+    void evaluateAgents() // puts the agents into lobbies to be fitted into environments to be evaluated, then evaluated
+    {
+        lobby newLobby;
+        for (int i = 0; i < numberOfAgents; i++) // add all agents into the lobby
+        {
+            newLobby.addAgent(agents[i]);
+        }
+        newLobby.ready(); // ready the lobby, start fitting, and start evaluations
+    }
+
     void shuffleAgents() // shuffle the agents around in agents vector
     {
-        for (int i = 0; i < numberOfStructureNodes; i++)
+        for (int i = 0; i < numberOfAgents; i++)
         {
-            int tempAgentIndex = rand() % numberOfStructureNodes;
+            int tempAgentIndex = rand() % numberOfAgents;
             agent *tempAgent = agents[tempAgentIndex];
             agents[tempAgentIndex] = agents[i];
             agents[i] = tempAgent;
@@ -727,24 +876,13 @@ public:
 
     void selectionAndReplaceAgents() // replaces the bottom percent with mutated top percent
     {
-        int topPercent = max(1, int(numberOfStructureNodes * agentsKeptPercent)); // get number of kept agents
-        for (int i = topPercent; i < numberOfStructureNodes; i++)                 // for every failed agent, erase the data and replace with mutated top percent
+        for (int i = numberOfKeptAgents; i < numberOfAgents; i++) // for every failed agent, erase the data and replace with mutated top percent
         {
             agents[i]->erase();
             delete agents[i];
-            agents[i] = new agent(agents[i % topPercent]);
+            agents[i] = new agent(agents[i % numberOfKeptAgents]);
             agents[i]->mutate();
         }
-    }
-
-    void evaluateAgents() // puts the agents into lobbies to be fitted into environments to be evaluated, then evaluated
-    {
-        lobby newLobby;
-        for (int i = 0; i < numberOfStructureNodes; i++) // add all agents into the lobby
-        {
-            newLobby.addAgent(agents[i]);
-        }
-        newLobby.ready(); // ready the lobby, start fitting, and start evaluations
     }
 
     void evaluate_Select_Diversify() // evaluate the agents under the model, replaces the bottom percent with mutated top percent, and saves the state of the training
@@ -753,78 +891,15 @@ public:
         shuffleAgents();             // shuffle the agents around in agents vector, used so old top agents doesn't always get priority when sorted
         sortAgents();                // sorts the agents
         selectionAndReplaceAgents(); // replaces the bottom percent with mutated top percent
+        updateScoreAndTimer();
         // delete code after this comment, it is for saving program state only in the model scope, will transition to batch scope once complete
         fileOut.open("storage.txt");       // clears and opens storage file
         saveState();                       // stores all data of the model to the file
-        fileOut << "f";                    // notifies that the file is complete
         fileOut.close();                   // closes the file
-        fileOut.open("backupStorage.txt"); // repeat with backup because if program stops midway storage, one file is guaranteed to be "complete"
+        fileOut.open("backupStorage.txt"); // repeat with backup because if program stops midway storage, one file is guaranteed to be complete/untouched
         saveState();
-        fileOut << "f";
         fileOut.close();
-        cout << agents[0]->score << endl; // for testing purposes
-    }
-
-    void diversifyAgentRepresentative() // clones and mutates the agent representative to the agents list, then deletes agent representative
-    {
-        for (int i = 0; i < numberOfStructureNodes; i++) // for size of structure, copy and mutate agent representative
-        {
-            if (i < agents.size()) // if current index is within the previous size of the list, erase the data and replace it
-            {
-                agents[i]->erase();
-                delete agents[i];
-                agents[i] = new agent(agentRepresentative);
-            }
-            else // if current index is outside the previous size of the list, add more agents
-            {
-                agents.push_back(new agent(agentRepresentative));
-            }
-            agents[i]->mutate();
-        }
-        while (agents.size() > numberOfStructureNodes) // if the current size is less then previous size, erase all leftover data and delete extra space
-        {
-            agents[agents.size() - 1]->erase();
-            delete agents[agents.size() - 1];
-            agents.pop_back();
-        }
-        agentRepresentative->erase(); // erase all data contained in the agent representative
-        delete agentRepresentative;   // delete the representative, should I set it to null? seems unecessary since when used, contains an agent pointer
-    }
-
-    void getReverseStructure(vector<vector<int>> *givenReverseStructure) // generate the structure, parent nodes become child nodes and other way around
-    {
-        for (int i = 0; i < numberOfStructureNodes; i++) // fill in second layer of vector before generating
-        {
-            givenReverseStructure->push_back({});
-        }
-        for (int i = 0; i < numberOfStructureNodes; i++) // for all nodes, add the current node to all its parent node's reverse connections
-        {
-            for (int j = 0; j < structureNodes[i]->numberOfConnections; j++)
-            {
-                (*givenReverseStructure)[structureNodes[i]->connections[j]].push_back(i);
-            }
-        }
-    }
-
-    void mutateAndDiversify() // mutates the species structure proportional to its size and updates the agent representative's data to match alterations
-    {
-        agentRepresentative = new agent(agents[0]);                             // set the representative to the best agent
-        vector<vector<int>> *reverseStructurePointer = new vector<vector<int>>; // initialize the reverse structure pointer
-        getReverseStructure(reverseStructurePointer);                           // passes in the pointer, generate the structure, parent nodes become child nodes and other way around
-        int perviousNumberOfStructureNodes = numberOfStructureNodes;            // sets the amount of mutations to an unchanging value since the forloop potentially changes the number of nodes
-        for (int i = 0; i < perviousNumberOfStructureNodes; i++)
-        {
-            addNode();                                 // add a node in between a random connection of a random node
-            addConnection();                           // adds a connetion from a random node to a random node
-            deleteNode(reverseStructurePointer);       // deletes a random node that aren't input or output nodes and stretches the children node connections to the parent nodes
-            deleteConnection(reverseStructurePointer); // deletes a connection from a random node if isn't illegal
-        }
-        delete reverseStructurePointer;                  // !!! do I do delete[] or just delete?
-        for (int i = 0; i < numberOfStructureNodes; i++) // changes the mutation rates of every node
-        {
-            structureNodes[i]->mutate();
-        }
-        diversifyAgentRepresentative(); // clones and mutates the agent representative to the agents list, then deletes agent representative
+        cout << currentScore << endl; // for testing purposes
     }
 
     void addNode() // add a node in between a random connection of a random node
@@ -863,14 +938,121 @@ public:
         }
     }
 
-    void deleteNode(vector<vector<int>> *givenReverseStructurePointer) // deletes a random node that aren't input or output nodes and stretches the children node connections to the parent nodes
+    void getReverseStructure(vector<vector<int>> *givenReverseStructure) // generate the structure, parent nodes become child nodes and other way around
     {
-        int chosenNode = rand() % numberOfStructureNodes;
+        for (int i = 0; i < numberOfStructureNodes; i++) // fill in second layer of vector before generating
+        {
+            givenReverseStructure->push_back({});
+        }
+        for (int i = 0; i < numberOfStructureNodes; i++) // for all nodes, add the current node to all its parent node's reverse connections
+        {
+            for (int j = 0; j < structureNodes[i]->numberOfConnections; j++)
+            {
+                (*givenReverseStructure)[structureNodes[i]->connections[j]].push_back(i);
+            }
+        }
     }
 
-    void deleteConnection(vector<vector<int>> *givenReverseStructurePointer) // deletes a connection from a random node if isn't illegal
+    void deleteNode() // deletes a random node that aren't input or output nodes and stretches the children node connections to the parent nodes
+    {
+        // int chosenNode = rand() % numberOfStructureNodes;
+        // if (structureNodes[chosenNode]->deleteNodeMutationRate > randDouble() || chosenNode < defaultNumberOfInputNodes + defaultNumberOfOutputNodes) // if mutation rate allows this mutation
+        // {
+        //     return;
+        // }
+        // vector<vector<int>> *reverseStructurePointer = new vector<vector<int>>; // initialize the reverse structure pointer
+        // getReverseStructure(reverseStructurePointer);                           // passes in the pointer, generate the structure, parent nodes become child nodes and other way around
+        // //
+        // delete reverseStructurePointer;                                         // !!! do I do delete[] or just delete?
+    }
+
+    int numberOfNodesReached(int givenNode, int givenDeletedConnection, bool *givenReached) // if you delete this connection, can you still reach all the nodes
+    {
+        if (givenReached[givenNode] == true) // if this node has been reached, return 0 because it has been accounted for
+        {
+            return 0;
+        }
+        int sum = 0; // if not, count all nodes connected to it and count itself as well
+        givenReached[givenNode] = true;
+        sum++;
+        for (int i = 0; i < structureNodes[givenNode]->numberOfConnections; i++)
+        {
+            if (i != givenDeletedConnection) // check the nodes connected to it as long as the connection index is not the deleted index
+            {
+                sum += numberOfNodesReached(structureNodes[givenNode]->connections[i], -1, givenReached);
+            }
+        }
+        return sum;
+    }
+
+    void deleteConnection() // deletes a connection from a random node if isn't illegal
     {
         int chosenNode = rand() % numberOfStructureNodes;
+        if (structureNodes[chosenNode]->deleteConnectionMutationRate > randDouble() || structureNodes[chosenNode]->numberOfConnections == 1) // if mutation rate allows this mutation
+        {
+            return;
+        }
+        int chosenConnection = rand() % structureNodes[chosenNode]->numberOfConnections;
+        bool *reached = new bool[numberOfStructureNodes];
+        for (int i = 0; i < numberOfStructureNodes; i++)
+        {
+            reached[i] = false;
+        }
+        if (numberOfNodesReached(chosenNode, chosenConnection, reached) == numberOfStructureNodes) // if you delete this connection, can you still reach all the nodes
+        {
+            structureNodes[chosenNode]->connections.erase(structureNodes[chosenNode]->connections.begin() + chosenConnection);                                   // add the connection
+            structureNodes[chosenNode]->numberOfConnections--;                                                                                                   // update length of connections
+            agentRepresentative->componentNodes[chosenNode]->weights.erase(agentRepresentative->componentNodes[chosenNode]->weights.begin() + chosenConnection); // add a weight to the agent representative to mirror the alteration
+            agentRepresentative->componentNodes[chosenNode]->numberOfWeights--;                                                                                  // update weight length
+        }
+        delete[] reached;
+    }
+
+    void diversifyAgentRepresentative() // clones and mutates the agent representative to the agents list, then deletes agent representative
+    {
+        numberOfKeptAgents = max(1, int(numberOfStructureNodes * agentsKeptPercent * inverseAgentsReplacedPercent)); // number of top percent agents
+        int newNumberOfAgents = numberOfStructureNodes + numberOfKeptAgents;
+        for (int i = 0; i < newNumberOfAgents; i++) // for size of structure, copy and mutate agent representative
+        {
+            if (i < numberOfAgents) // if current index is within the previous size of the list, erase the data and replace it
+            {
+                agents[i]->erase();
+                delete agents[i];
+                agents[i] = new agent(agentRepresentative);
+            }
+            else // if current index is outside the previous size of the list, add more agents
+            {
+                agents.push_back(new agent(agentRepresentative));
+            }
+            agents[i]->mutate(); // mutate the clones
+        }
+        while (numberOfAgents > newNumberOfAgents) // if the current size is less then previous size, erase all leftover data and delete extra space
+        {
+            agents[numberOfAgents - 1]->erase();
+            delete agents[numberOfAgents - 1];
+            agents.pop_back();
+        }
+        numberOfAgents = newNumberOfAgents; // set the number of agents to the new size
+        agentRepresentative->erase();       // erase all data contained in the agent representative
+        delete agentRepresentative;         // delete the representative, should I set it to null? seems unecessary since when used, contains an agent pointer
+    }
+
+    void mutateAndDiversify() // mutates the species structure proportional to its size and updates the agent representative's data to match alterations
+    {
+        agentRepresentative = new agent(agents[0]);                  // set the representative to the best agent
+        int perviousNumberOfStructureNodes = numberOfStructureNodes; // sets the amount of mutations to an unchanging value since the forloop potentially changes the number of nodes
+        for (int i = 0; i < perviousNumberOfStructureNodes; i++)
+        {
+            addNode();          // add a node in between a random connection of a random node
+            addConnection();    // adds a connetion from a random node to a random node
+            deleteNode();       // deletes a random node that aren't input or output nodes and stretches the children node connections to the parent nodes
+            deleteConnection(); // deletes a connection from a random node if isn't illegal
+        }
+        for (int i = 0; i < numberOfStructureNodes; i++) // changes the mutation rates of every node
+        {
+            structureNodes[i]->mutate();
+        }
+        diversifyAgentRepresentative(); // clones and mutates the agent representative to the agents list, then deletes agent representative
     }
 };
 
@@ -879,31 +1061,121 @@ class batch // stores different models, not guaranteed to be different though
 public:
 };
 
-string getStorageFile() // gets a completed file, if storage.txt doesn't have f at the end, then backupStorage.txt is guaranteed to have it
+string getStorageFile(string file) // if file structure is complete (last training cycle completed storing all variables), then return the file
 {
-    fileIn.open("storage.txt");
-    string a;
-    while (fileIn >> a)
+    fileIn.open(file);
+    int numberOfStructureNodes = 0;
+    int numberOfAgents = 0;
+    int numberOfConnections = 0;
+    int numberOfComponentNodes = 0;
+    int numberOfWeights = 0;
+    string temp;
+
+    fileIn >> numberOfStructureNodes;
+    if (fileIn.peek() == EOF) // checks if it is the end of the file
     {
-        if (a == "f")
+        fileIn.close();
+        return "";
+    }
+    fileIn >> temp;           // unimportant vars for this check
+    if (fileIn.peek() == EOF) // checks if it is the end of the file
+    {
+        fileIn.close();
+        return "";
+    }
+    fileIn >> numberOfAgents;
+    if (fileIn.peek() == EOF) // checks if it is the end of the file
+    {
+        fileIn.close();
+        return "";
+    }
+    for (int j = 0; j < 5 + logLength; j++) // 5 model score/timer vars and (logLength) score
+    {
+        fileIn >> temp;           // unimportant vars for this check
+        if (fileIn.peek() == EOF) // checks if it is the end of the file
         {
             fileIn.close();
-            return "storage.txt";
+            return "";
+        }
+    }
+    for (int i = 0; i < numberOfStructureNodes; i++)
+    {
+        fileIn >> numberOfConnections;
+        if (fileIn.peek() == EOF) // checks if it is the end of the file
+        {
+            fileIn.close();
+            return "";
+        }
+        for (int j = 0; j < 4 + numberOfConnections; j++) // 4 mutation rate vars and (numberOfConnections) connection indexes
+        {
+            fileIn >> temp;           // unimportant vars for this check
+            if (fileIn.peek() == EOF) // checks if it is the end of the file
+            {
+                fileIn.close();
+                return "";
+            }
+        }
+    }
+    for (int i = 0; i < numberOfAgents; i++)
+    {
+        fileIn >> temp;           // unimportant vars for this check
+        if (fileIn.peek() == EOF) // checks if it is the end of the file
+        {
+            fileIn.close();
+            return "";
+        }
+        fileIn >> numberOfComponentNodes;
+        if (fileIn.peek() == EOF) // checks if it is the end of the file
+        {
+            fileIn.close();
+            return "";
+        }
+        for (int j = 0; j < numberOfComponentNodes; j++)
+        {
+            fileIn >> numberOfWeights;
+            if (fileIn.peek() == EOF) // checks if it is the end of the file
+            {
+                fileIn.close();
+                return "";
+            }
+            for (int k = 0; k < 7 + numberOfWeights; k++)
+            {
+                fileIn >> temp;           // unimportant vars for this check
+                if (fileIn.peek() == EOF) // checks if it is the end of the file
+                {
+                    fileIn.close();
+                    return "";
+                }
+            }
         }
     }
     fileIn.close();
-    return "backupStorage.txt";
+    return file;
 }
 
 int main()
 {
     srand(unsigned((time(NULL) % 9973 + 1) * (time(NULL) % 997 + 1) * (time(NULL) % 97 + 1) * (time(NULL) % 7 + 1))); // seeds the seed
 
-    fileIn.open(getStorageFile()); // opens "uncorrupted" storage file
-    model newModel(true);          // copies the stored model from last trained session
-    fileIn.close();                // closes storage file
-    while (true)
+    string file = getStorageFile("storage.txt"); // check first file
+    if (file == "")                              // if first file corrupted
     {
-        newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
+        file = getStorageFile("backupStorage.txt"); // check second file
     }
+    if (file != "") // if one of the files works, open the file, otherwise, the storage format changed/corrupted or it is first training cycle on empty files
+    {
+        fileIn.open(file); // opens "uncorrupted" storage file
+    }
+    model newModel(file != ""); // copies the stored model from last trained session, or if no file is available, make a default model
+    if (file != "")
+    {
+        fileIn.close(); // closes storage file
+    }
+    // newModel.info();
+    // return 0;
+    newModel.deleteConnection();
+    // while (true)
+    // {
+    //     newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
+    // }
 }
