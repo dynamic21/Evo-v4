@@ -31,6 +31,7 @@ ifstream fileIn;
 
 // TODO:
 // - batch
+// - make agent representative a local var
 
 double randDouble()
 {
@@ -343,6 +344,7 @@ public:
 
     vector<double> evaluateInput(vector<double> givenInputs) // produces defaultNumberOfOutput number of values given defaultNumberOfInput number of inputs
     {
+        vector<structureNode *> structureNodes = *structureNodesPointer;
         int *futureMemory = new int[numberOfComponentNodes];       // substitute of components[i].futureMemory, stored here because it is a waste of space outside of this function
         bool *perviouslyActive = new bool[numberOfComponentNodes]; // substitute of components[i].perviouslyActive, stored here because it is a waste of space outside of this function
         for (int i = 0; i < defaultNumberOfInputNodes; i++)        // add each input to their coresponding input node memories
@@ -901,6 +903,14 @@ public:
             agentRepresentative->componentNodes.push_back(new componentNode());                                     // adds a component node to the agent to mirror the alteration
             agentRepresentative->componentNodes[agentRepresentative->numberOfComponentNodes]->weights.push_back(1); // adds a weight to the new component node to mirror alteration
             agentRepresentative->componentNodes[agentRepresentative->numberOfComponentNodes++]->numberOfWeights++;  //  then updates number of componentNodes and weights
+            if (agentRepresentative->numberOfComponentNodes != numberOfStructureNodes || agentRepresentative->componentNodes.size() != structureNodes.size())
+            {
+                cout << "error!" << endl;
+                cout << agentRepresentative->numberOfComponentNodes << endl;
+                cout << numberOfStructureNodes << endl;
+                cout << agentRepresentative->componentNodes.size() << endl;
+                cout << structureNodes.size() << endl;
+            }
         }
     }
 
@@ -1035,6 +1045,7 @@ public:
             deleteNode();       // deletes a random node that aren't input or output nodes and stretches the children node connections to the parent nodes
             deleteConnection(); // deletes a connection from a random node if isn't illegal
         }
+        agentRepresentative->structureNodesPointer = &structureNodes;
         for (int i = 0; i < numberOfStructureNodes; i++) // changes the mutation rates of every node
         {
             structureNodes[i]->mutate();
@@ -1164,29 +1175,27 @@ public:
             {
                 models[i]->resetScoreAndTimer();
             }
-            // int numberOfKeptSpecies = max(1, int(numberOfModels * modelsKeptPercent)); // number of top percent agents
-            // int newNumberOfAgents = numberOfStructureNodes + numberOfKeptAgents;
-            // for (int i = 0; i < newNumberOfAgents; i++) // for size of structure, copy and mutate agent representative
-            // {
-            //     if (i < numberOfAgents) // if current index is within the previous size of the list, erase the data and replace it
-            //     {
-            //         agents[i]->erase();
-            //         delete agents[i];
-            //         agents[i] = new agent(agentRepresentative);
-            //     }
-            //     else // if current index is outside the previous size of the list, add more agents
-            //     {
-            //         agents.push_back(new agent(agentRepresentative));
-            //     }
-            //     agents[i]->mutate(); // mutate the clones
-            // }
-            // while (numberOfAgents > newNumberOfAgents) // if the current size is less then previous size, erase all leftover data and delete extra space
-            // {
-            //     agents[numberOfAgents - 1]->erase();
-            //     delete agents[numberOfAgents - 1];
-            //     agents.pop_back();
-            // }
-            // numberOfAgents = newNumberOfAgents; // set the number of agents to the new size
+            int numberOfKeptmodels = max(1, int(numberOfModels * modelsKeptPercent)); // number of top percent agents
+            while (numberOfModels > numberOfKeptmodels)                               // if the current size is less then previous size, erase all leftover data and delete extra space
+            {
+                models[numberOfModels - 1]->erase();
+                delete models[numberOfModels - 1];
+                models.pop_back();
+                numberOfModels--;
+            }
+            int previousNumberOfModels = numberOfModels;
+            for (int i = 0; i < previousNumberOfModels; i++)
+            {
+                for (int j = 0; j < models[i]->numberOfStructureNodes; j++)
+                {
+                    models.push_back(new model(models[i]));
+                    models[numberOfModels]->mutateAndUpdate();
+                    numberOfModels++;
+                }
+            }
+            fileOut.open("storage.txt"); // clears and opens storage file
+            saveState();                 // stores all data of the model to the file
+            fileOut.close();             // closes the file
         }
     }
 };
