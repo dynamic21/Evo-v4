@@ -11,7 +11,7 @@
 #define populationExposurePercent 0.2
 #define agentsKeptPercent 0.2
 #define inverseAgentsReplacedPercent 1 / (1 - agentsKeptPercent)
-#define speciesKeptPercent 0.2
+#define modelsKeptPercent 0.2
 #define logLength 100
 
 using std::abs;
@@ -876,6 +876,8 @@ public:
 
     void selectionAndReplaceAgents() // replaces the bottom percent with mutated top percent
     {
+        shuffleAgents();                                          // shuffle the agents around in agents vector, used so old top agents doesn't always get priority when sorted
+        sortAgents();                                             // sorts the agents
         for (int i = numberOfKeptAgents; i < numberOfAgents; i++) // for every failed agent, erase the data and replace with mutated top percent
         {
             agents[i]->erase();
@@ -883,23 +885,6 @@ public:
             agents[i] = new agent(agents[i % numberOfKeptAgents]);
             agents[i]->mutate();
         }
-    }
-
-    void evaluate_Select_Diversify() // evaluate the agents under the model, replaces the bottom percent with mutated top percent, and saves the state of the training
-    {
-        evaluateAgents();            // puts the agents into lobbies to be fitted into environments to be evaluated, then evaluated
-        shuffleAgents();             // shuffle the agents around in agents vector, used so old top agents doesn't always get priority when sorted
-        sortAgents();                // sorts the agents
-        selectionAndReplaceAgents(); // replaces the bottom percent with mutated top percent
-        updateScoreAndTimer();
-        // delete code after this comment, it is for saving program state only in the model scope, will transition to batch scope once complete
-        fileOut.open("storage.txt");       // clears and opens storage file
-        saveState();                       // stores all data of the model to the file
-        fileOut.close();                   // closes the file
-        fileOut.open("backupStorage.txt"); // repeat with backup because if program stops midway storage, one file is guaranteed to be complete/untouched
-        saveState();
-        fileOut.close();
-        cout << currentScore << endl; // for testing purposes
     }
 
     void addNode() // add a node in between a random connection of a random node
@@ -911,6 +896,7 @@ public:
             structureNodes.push_back(new structureNode());                                                          // add the new structure node
             int chosenConenctionNode = structureNodes[chosenNode]->connections[chosenConnection];                   // gets the parent node index
             structureNodes[numberOfStructureNodes]->connections.push_back(chosenConenctionNode);                    // sets the new node's connection to point to the parent node
+            structureNodes[numberOfStructureNodes]->numberOfConnections++;                                          // updates number of connections
             structureNodes[chosenNode]->connections[chosenConnection] = numberOfStructureNodes++;                   // sets the targeted node to replace its connetion with the new node, then update number of structureNodes
             agentRepresentative->componentNodes.push_back(new componentNode());                                     // adds a component node to the agent to mirror the alteration
             agentRepresentative->componentNodes[agentRepresentative->numberOfComponentNodes]->weights.push_back(1); // adds a weight to the new component node to mirror alteration
@@ -1032,12 +1018,13 @@ public:
             delete agents[numberOfAgents - 1];
             agents.pop_back();
         }
-        numberOfAgents = newNumberOfAgents; // set the number of agents to the new size
-        agentRepresentative->erase();       // erase all data contained in the agent representative
-        delete agentRepresentative;         // delete the representative, should I set it to null? seems unecessary since when used, contains an agent pointer
+        numberOfAgents = newNumberOfAgents;                     // set the number of agents to the new size
+        timeSinceClimaxThreshold = numberOfStructureNodes * 10; // update threshold
+        agentRepresentative->erase();                           // erase all data contained in the agent representative
+        delete agentRepresentative;                             // delete the representative, should I set it to null? seems unecessary since when used, contains an agent pointer
     }
 
-    void mutateAndDiversify() // mutates the species structure proportional to its size and updates the agent representative's data to match alterations
+    void mutateAndUpdate() // mutates the species structure proportional to its size and updates the agent representative's data to match alterations
     {
         agentRepresentative = new agent(agents[0]);                  // set the representative to the best agent
         int perviousNumberOfStructureNodes = numberOfStructureNodes; // sets the amount of mutations to an unchanging value since the forloop potentially changes the number of nodes
@@ -1059,54 +1046,189 @@ public:
 class batch // stores different models, not guaranteed to be different though
 {
 public:
+    int numberOfModels;
+    vector<model *> models;
+
+    batch(bool download = false)
+    {
+        if (download)
+        {
+            fileIn >> numberOfModels;
+            for (int i = 0; i < numberOfModels; i++)
+            {
+                models.push_back(new model(true));
+            }
+        }
+        else
+        {
+            numberOfModels = defaultNumberOfInputNodes + defaultNumberOfOutputNodes;
+            for (int i = 0; i < numberOfModels; i++)
+            {
+                models.push_back(new model());
+                models[i]->mutateAndUpdate();
+            }
+        }
+    }
+
+    batch(batch *givenBatch)
+    {
+        numberOfModels = givenBatch->numberOfModels;
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models.push_back(new model(givenBatch->models[i]));
+        }
+    }
+
+    void erase()
+    {
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models[i]->erase();
+            delete models[i];
+        }
+    }
+
+    void saveState() // stores all data of the model to the storage file
+    {
+        fileOut << numberOfModels << " ";
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models[i]->saveState();
+        }
+    }
+
+    void info()
+    {
+        cout << "numberOfModels: " << numberOfModels << endl;
+        cout << "models: " << endl;
+        cout << "__________" << endl;
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models[i]->info();
+            cout << "__________" << endl;
+        }
+    }
+
+    void evaluateAgents()
+    {
+        lobby newLobby;
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models[i]->evaluateAgents();                        // do agent to agent within a model
+            for (int j = 0; j < models[i]->numberOfAgents; j++) // do agent to agent within batch
+            {
+                newLobby.addAgent(models[i]->agents[i]); // add agent to batch lobby
+            }
+        }
+        newLobby.ready();
+    }
+
+    void shuffleModels() // shuffle the models around in models vector
+    {
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            int tempModelIndex = rand() % numberOfModels;
+            model *tempModel = models[tempModelIndex];
+            models[tempModelIndex] = models[i];
+            models[i] = tempModel;
+        }
+    }
+
+    void sortModels() // sorts the models
+    {
+        sort(models.begin(), models.end(), [](model *model1, model *model2) {
+            return (model1->currentScore > model2->currentScore);
+        });
+    }
+
+    void evaluateModels()
+    {
+        evaluateAgents();
+        bool modelsReady = true;
+        for (int i = 0; i < numberOfModels; i++)
+        {
+            models[i]->selectionAndReplaceAgents();
+            models[i]->updateScoreAndTimer();
+            if (!modelsReady || models[i]->timeSinceClimax < models[i]->timeSinceClimaxThreshold)
+            {
+                modelsReady = false;
+            }
+        }
+        if (modelsReady)
+        {
+            cout << "Ready!" << endl;
+            shuffleModels();
+            sortModels();
+            cout << models[0]->currentScore << endl;
+            for (int i = 0; i < numberOfModels; i++)
+            {
+                models[i]->resetScoreAndTimer();
+            }
+            // int numberOfKeptSpecies = max(1, int(numberOfModels * modelsKeptPercent)); // number of top percent agents
+            // int newNumberOfAgents = numberOfStructureNodes + numberOfKeptAgents;
+            // for (int i = 0; i < newNumberOfAgents; i++) // for size of structure, copy and mutate agent representative
+            // {
+            //     if (i < numberOfAgents) // if current index is within the previous size of the list, erase the data and replace it
+            //     {
+            //         agents[i]->erase();
+            //         delete agents[i];
+            //         agents[i] = new agent(agentRepresentative);
+            //     }
+            //     else // if current index is outside the previous size of the list, add more agents
+            //     {
+            //         agents.push_back(new agent(agentRepresentative));
+            //     }
+            //     agents[i]->mutate(); // mutate the clones
+            // }
+            // while (numberOfAgents > newNumberOfAgents) // if the current size is less then previous size, erase all leftover data and delete extra space
+            // {
+            //     agents[numberOfAgents - 1]->erase();
+            //     delete agents[numberOfAgents - 1];
+            //     agents.pop_back();
+            // }
+            // numberOfAgents = newNumberOfAgents; // set the number of agents to the new size
+        }
+    }
 };
 
 string getStorageFile(string file) // if file structure is complete (last training cycle completed storing all variables), then return the file
 {
     fileIn.open(file);
-    int numberOfStructureNodes = 0;
-    int numberOfAgents = 0;
-    int numberOfConnections = 0;
-    int numberOfComponentNodes = 0;
-    int numberOfWeights = 0;
+    int numberOfModels;
+    int numberOfStructureNodes;
+    int numberOfAgents;
+    int numberOfConnections;
+    int numberOfComponentNodes;
+    int numberOfWeights;
     string temp;
 
-    fileIn >> numberOfStructureNodes;
+    fileIn >> numberOfModels;
     if (fileIn.peek() == EOF) // checks if it is the end of the file
     {
         fileIn.close();
         return "";
     }
-    fileIn >> temp;           // unimportant vars for this check
-    if (fileIn.peek() == EOF) // checks if it is the end of the file
+    for (int i = 0; i < numberOfModels; i++)
     {
-        fileIn.close();
-        return "";
-    }
-    fileIn >> numberOfAgents;
-    if (fileIn.peek() == EOF) // checks if it is the end of the file
-    {
-        fileIn.close();
-        return "";
-    }
-    for (int j = 0; j < 5 + logLength; j++) // 5 model score/timer vars and (logLength) score
-    {
+        fileIn >> numberOfStructureNodes;
+        if (fileIn.peek() == EOF) // checks if it is the end of the file
+        {
+            fileIn.close();
+            return "";
+        }
         fileIn >> temp;           // unimportant vars for this check
         if (fileIn.peek() == EOF) // checks if it is the end of the file
         {
             fileIn.close();
             return "";
         }
-    }
-    for (int i = 0; i < numberOfStructureNodes; i++)
-    {
-        fileIn >> numberOfConnections;
+        fileIn >> numberOfAgents;
         if (fileIn.peek() == EOF) // checks if it is the end of the file
         {
             fileIn.close();
             return "";
         }
-        for (int j = 0; j < 4 + numberOfConnections; j++) // 4 mutation rate vars and (numberOfConnections) connection indexes
+        for (int j = 0; j < 5 + logLength; j++) // 5 model score/timer vars and (logLength) score
         {
             fileIn >> temp;           // unimportant vars for this check
             if (fileIn.peek() == EOF) // checks if it is the end of the file
@@ -1115,36 +1237,54 @@ string getStorageFile(string file) // if file structure is complete (last traini
                 return "";
             }
         }
-    }
-    for (int i = 0; i < numberOfAgents; i++)
-    {
-        fileIn >> temp;           // unimportant vars for this check
-        if (fileIn.peek() == EOF) // checks if it is the end of the file
+        for (int i = 0; i < numberOfStructureNodes; i++)
         {
-            fileIn.close();
-            return "";
-        }
-        fileIn >> numberOfComponentNodes;
-        if (fileIn.peek() == EOF) // checks if it is the end of the file
-        {
-            fileIn.close();
-            return "";
-        }
-        for (int j = 0; j < numberOfComponentNodes; j++)
-        {
-            fileIn >> numberOfWeights;
+            fileIn >> numberOfConnections;
             if (fileIn.peek() == EOF) // checks if it is the end of the file
             {
                 fileIn.close();
                 return "";
             }
-            for (int k = 0; k < 7 + numberOfWeights; k++)
+            for (int j = 0; j < 4 + numberOfConnections; j++) // 4 mutation rate vars and (numberOfConnections) connection indexes
             {
                 fileIn >> temp;           // unimportant vars for this check
                 if (fileIn.peek() == EOF) // checks if it is the end of the file
                 {
                     fileIn.close();
                     return "";
+                }
+            }
+        }
+        for (int i = 0; i < numberOfAgents; i++)
+        {
+            fileIn >> temp;           // unimportant vars for this check
+            if (fileIn.peek() == EOF) // checks if it is the end of the file
+            {
+                fileIn.close();
+                return "";
+            }
+            fileIn >> numberOfComponentNodes;
+            if (fileIn.peek() == EOF) // checks if it is the end of the file
+            {
+                fileIn.close();
+                return "";
+            }
+            for (int j = 0; j < numberOfComponentNodes; j++)
+            {
+                fileIn >> numberOfWeights;
+                if (fileIn.peek() == EOF) // checks if it is the end of the file
+                {
+                    fileIn.close();
+                    return "";
+                }
+                for (int k = 0; k < 7 + numberOfWeights; k++)
+                {
+                    fileIn >> temp;           // unimportant vars for this check
+                    if (fileIn.peek() == EOF) // checks if it is the end of the file
+                    {
+                        fileIn.close();
+                        return "";
+                    }
                 }
             }
         }
@@ -1166,7 +1306,7 @@ int main()
     {
         fileIn.open(file); // opens "uncorrupted" storage file
     }
-    model newModel(file != ""); // copies the stored model from last trained session, or if no file is available, make a default model
+    batch newBatch(file != ""); // copies the stored model from last trained session, or if no file is available, make a default model
     if (file != "")
     {
         fileIn.close(); // closes storage file
@@ -1175,6 +1315,6 @@ int main()
     // return 0;
     while (true)
     {
-        newModel.evaluate_Select_Diversify(); // forever trains the agents under this model
+        newBatch.evaluateModels();
     }
 }
